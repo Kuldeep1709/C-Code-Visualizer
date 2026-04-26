@@ -2,11 +2,13 @@ interface ControlPanelProps {
   onCompile: () => void;
   onStepNext: () => void;
   onStepInto: () => void;
+  onStepBack: () => void;
   onContinue: () => void;
   onStop: () => void;
   onReset: () => void;
   canCompile: boolean;
   canStep: boolean;
+  canStepBack: boolean;
   isDebugging: boolean;
   status: string;
 }
@@ -15,11 +17,13 @@ export default function ControlPanel({
   onCompile,
   onStepNext,
   onStepInto,
+  onStepBack,
   onContinue,
   onStop,
   onReset,
   canCompile,
   canStep,
+  canStepBack,
   isDebugging,
   status,
 }: ControlPanelProps) {
@@ -41,6 +45,18 @@ export default function ControlPanel({
       <div className="control-divider" />
 
       {/* Step controls */}
+      <button
+        id="btn-step-back"
+        className="control-btn control-btn--secondary"
+        onClick={onStepBack}
+        disabled={!canStepBack}
+        title="Step Back (F9)"
+      >
+        <span className="control-btn__icon">↩</span>
+        Back
+        <span className="control-btn__kbd">F9</span>
+      </button>
+
       <button
         id="btn-step-next"
         className="control-btn control-btn--primary"
@@ -70,10 +86,9 @@ export default function ControlPanel({
         className="control-btn"
         onClick={onContinue}
         disabled={!canStep}
-        title="Continue (F8)"
+        title="Run to finish (F8)"
       >
-        <span className="control-btn__icon">⏩</span>
-        Continue
+        Finish
         <span className="control-btn__kbd">F8</span>
       </button>
 

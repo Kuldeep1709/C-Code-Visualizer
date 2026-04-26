@@ -101,11 +101,13 @@ function App() {
         onCompile={handleCompile}
         onStepNext={stepNext}
         onStepInto={stepInto}
+        onStepBack={stepBack}
         onContinue={continueExec}
         onStop={stop}
         onReset={handleReset}
         canCompile={canCompile}
         canStep={canStep}
+        canStepBack={canStepBack}
         isDebugging={isDebugging}
         status={state.status}
       />
