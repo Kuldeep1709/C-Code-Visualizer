@@ -52,18 +52,43 @@ const CONTROL_KEYWORDS = new Set([
   'if', 'for', 'while', 'switch', 'return', 'sizeof',
 ]);
 
-function inferPendingFunctionCall(sourceLine: string, existingFrames: StackFrame[]): string | null {
+function getUserDefinedFunctions(sourceCode: string): Set<string> {
+  const functions = new Set<string>();
+  const functionDefPattern = /^\s*[A-Za-z_]\w*(?:\s+[*\w]+)*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{/gm;
+  let match: RegExpExecArray | null = functionDefPattern.exec(sourceCode);
+  while (match) {
+    functions.add(match[1]);
+    match = functionDefPattern.exec(sourceCode);
+  }
+  return functions;
+}
+
+function inferPendingFunctionCall(
+  sourceLine: string,
+  existingFrames: StackFrame[],
+  userDefinedFunctions: Set<string>,
+): string | null {
   const withoutStrings = sourceLine
     .replace(/"([^"\\]|\\.)*"/g, '')
     .replace(/'([^'\\]|\\.)*'/g, '');
 
-  const match = withoutStrings.match(/([A-Za-z_]\w*)\s*\(/);
-  if (!match) return null;
+  const callMatches = Array.from(withoutStrings.matchAll(/([A-Za-z_]\w*)\s*\(/g))
+    .map((m) => m[1])
+    .filter((name) => !CONTROL_KEYWORDS.has(name) && userDefinedFunctions.has(name));
+  if (callMatches.length === 0) return null;
 
-  const candidate = match[1];
-  if (CONTROL_KEYWORDS.has(candidate)) return null;
-  if (existingFrames.some((frame) => frame.func === candidate)) return null;
-  return candidate;
+  const realFrames = existingFrames.filter((frame) => frame.level >= 0);
+  const topRealFrame = realFrames[0];
+
+  for (const candidate of callMatches) {
+    const alreadyInRealStack = realFrames.some((frame) => frame.func === candidate);
+    const isRecursiveCallFromCurrentFrame = topRealFrame?.func === candidate;
+    if (!alreadyInRealStack || isRecursiveCallFromCurrentFrame) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 export function useDebugSession() {
@@ -126,6 +151,7 @@ export function useDebugSession() {
           const s = message.data;
           setState(prev => {
             const currentLine = s.line ?? s.currentLine ?? -1;
+            const userDefinedFunctions = getUserDefinedFunctions(prev.sourceCode);
             const mappedStack: StackFrame[] = (s.stack ?? []).map((f: any) => ({
               level: f.level,
               func: f.func ?? f.function,
@@ -134,7 +160,7 @@ export function useDebugSession() {
             }));
 
             const sourceLine = currentLine > 0 ? (prev.sourceLines[currentLine - 1] ?? '') : '';
-            const inferredCall = inferPendingFunctionCall(sourceLine, mappedStack);
+            const inferredCall = inferPendingFunctionCall(sourceLine, mappedStack, userDefinedFunctions);
             const stackWithPendingCall = inferredCall
               ? [{ level: -1, func: inferredCall, file: 'main.c', line: currentLine }, ...mappedStack]
               : mappedStack;
@@ -210,7 +236,12 @@ export function useDebugSession() {
     }
   }, []);
 
-  const stepNext = useCallback(() => sendCommand('next'), [sendCommand]);
+  const stepNext = useCallback(() => {
+    const sourceLine = state.currentLine > 0 ? (state.sourceLines[state.currentLine - 1] ?? '') : '';
+    const userDefinedFunctions = getUserDefinedFunctions(state.sourceCode);
+    const pendingCall = inferPendingFunctionCall(sourceLine, state.stack, userDefinedFunctions);
+    sendCommand(pendingCall ? 'step' : 'next');
+  }, [sendCommand, state.currentLine, state.sourceCode, state.sourceLines, state.stack]);
   const stepInto = useCallback(() => sendCommand('step'), [sendCommand]);
   const continueExec = useCallback(() => sendCommand('continue'), [sendCommand]);
 
