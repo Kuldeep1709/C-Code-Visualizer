@@ -10,6 +10,11 @@ struct Variable {
     std::string name;
     std::string type;
     std::string value;
+    std::string address;
+    std::vector<Variable> elements;  // For arrays/structs
+    bool isArray = false;
+    bool isString = false;
+    bool isPointer = false;
 };
 
 struct StackFrame {

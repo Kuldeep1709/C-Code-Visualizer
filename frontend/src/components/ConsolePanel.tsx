@@ -47,11 +47,6 @@ export default function ConsolePanel({ output, compileError, status }: ConsolePa
             <span className="welcome-state__desc">
               Write your C code in the editor, then click <strong>Compile & Debug</strong> to step through it line by line.
             </span>
-            <div className="welcome-state__keys">
-              <span className="welcome-state__key"><kbd>F5</kbd> Compile</span>
-              <span className="welcome-state__key"><kbd>F10</kbd> Next</span>
-              <span className="welcome-state__key"><kbd>F11</kbd> Step Into</span>
-            </div>
           </div>
         )}
 

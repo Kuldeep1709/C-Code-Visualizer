@@ -4,6 +4,11 @@ export interface Variable {
   name: string;
   type: string;
   value: string;
+  address?: string;
+  elements?: Variable[];
+  isArray?: boolean;
+  isString?: boolean;
+  isPointer?: boolean;
 }
 
 export interface StackFrame {

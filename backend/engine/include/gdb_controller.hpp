@@ -30,7 +30,7 @@ private:
     void drainPTY();
     ProgramState getCurrentState();
     int getCurrentLine();
-    std::vector<Variable> getLocalVariables();
+    std::vector<Variable> getLocalVariables(const std::string& currentFrameFile);
     std::vector<StackFrame> getStackFrames();
     std::string readCapturedOutput();
     bool isExitReason(const std::string& miOutput);

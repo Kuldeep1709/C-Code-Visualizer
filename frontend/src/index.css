@@ -431,7 +431,23 @@ body {
 }
 
 .var-type {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
   color: var(--accent-purple);
+  background: rgba(167, 139, 250, 0.1);
+  border: 1px solid rgba(167, 139, 250, 0.22);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.2px;
+  cursor: default;
+  align-self: center;
 }
 
 .var-value {
@@ -442,6 +458,102 @@ body {
 .var-value--changed {
   color: var(--accent-orange);
   animation: valueFlash 600ms ease-out;
+}
+
+.var-address {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-right: 6px;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+}
+
+.variable-row--header .var-address {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Array/Struct Groups */
+.variable-group {
+  margin-bottom: 2px;
+}
+
+.variable-row--expandable {
+  cursor: pointer;
+  background: rgba(77, 159, 255, 0.05);
+  border-radius: var(--radius-sm);
+}
+
+.variable-row--expandable:hover {
+  background: rgba(77, 159, 255, 0.1);
+}
+
+.array-toggle {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 4px;
+  transition: transform var(--transition-fast);
+}
+
+/* Array Elements */
+.array-elements {
+  margin-top: 4px;
+  margin-left: 20px;
+  border-left: 2px solid var(--border-default);
+  padding-left: 8px;
+}
+
+.array-header {
+  display: grid;
+  grid-template-columns: 0.6fr 1fr 1fr;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+}
+
+.array-element-row {
+  display: grid;
+  grid-template-columns: 0.6fr 1fr 1fr;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.array-element-row:hover {
+  background: var(--bg-hover);
+}
+
+.array-index {
+  color: var(--accent-cyan);
+  font-weight: 500;
+}
+
+.array-address {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.array-value {
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
+.array-value.string-char {
+  color: var(--accent-yellow);
 }
 
 @keyframes valueFlash {

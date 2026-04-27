@@ -212,20 +212,14 @@ ProgramState GDBController::start(const std::string& binaryPath, const std::stri
 
 ProgramState GDBController::stepOver() {
     sendCommand("-exec-next");
-    readUntilStopped(10000);
+    std::string response = readUntilStopped(10000);
     drainPTY();
-
-    // Check if program exited
-    std::string check;
-    sendCommand("-stack-list-frames");
-    std::string resp = readUntilResult(2000);
-    if (resp.find("error") != std::string::npos || resp.find("exited") != std::string::npos) {
+    if (isExitReason(response)) {
         ProgramState state;
         state.status = "finished";
         state.output = programOutput_;
         return state;
     }
-
     return getCurrentState();
 }
 
@@ -273,14 +267,35 @@ std::string GDBController::readCapturedOutput() { return programOutput_; }
 
 ProgramState GDBController::getCurrentState() {
     ProgramState state;
-    state.status      = "paused";
-    state.currentLine = getCurrentLine();
-    state.variables   = getLocalVariables();
-    state.stack       = getStackFrames();
-    state.output      = programOutput_;
+    state.status = "paused";
+
+    // Fetch current frame info once and reuse for both line number and variable filtering
+    sendCommand("-stack-info-frame");
+    std::string frameResp = readUntilResult(3000);
+    auto frameRecords = mi::parse(frameResp);
+    auto* frameResult = mi::findRecord(frameRecords, mi::RecordType::Result, "done");
+
+    // Extract current line from frame
+    state.currentLine = -1;
+    std::string currentFrameFile;
+    if (frameResult) {
+        auto it = frameResult->payload.find("frame");
+        if (it != frameResult->payload.end()) {
+            state.currentLine = it->second.getInt("line", -1);
+            currentFrameFile = it->second.getString("fullname", "");
+            if (currentFrameFile.empty())
+                currentFrameFile = it->second.getString("file", "");
+        }
+    }
+
+    state.variables = getLocalVariables(currentFrameFile);
+    state.stack     = getStackFrames();
+    state.output    = programOutput_;
     return state;
 }
 
+// Note: getCurrentLine() is now unused — line extraction is done in getCurrentState().
+// Kept for potential future use.
 int GDBController::getCurrentLine() {
     sendCommand("-stack-info-frame");
     std::string response = readUntilResult(3000);
@@ -292,33 +307,22 @@ int GDBController::getCurrentLine() {
     return it->second.getInt("line", -1);
 }
 
-std::vector<Variable> GDBController::getLocalVariables() {
-    if (!sourcePath_.empty()) {
-        sendCommand("-stack-info-frame");
-        std::string resp = readUntilResult(2000);
-        auto recs = mi::parse(resp);
-        auto* res = mi::findRecord(recs, mi::RecordType::Result, "done");
-        if (res) {
-            auto fit = res->payload.find("frame");
-            if (fit != res->payload.end()) {
-                std::string ff = fit->second.getString("fullname", "");
-                if (ff.empty()) ff = fit->second.getString("file", "");
-                if (ff.empty() || ff == "??") return {};
-                std::string srcBase = std::filesystem::path(sourcePath_).filename().string();
-                std::string frmBase = std::filesystem::path(ff).filename().string();
-                if (frmBase != srcBase) return {};
-            }
-        }
+std::vector<Variable> GDBController::getLocalVariables(const std::string& currentFrameFile) {
+    // Only show locals if we're in the user's source file (skip system/library frames)
+    if (!sourcePath_.empty() && !currentFrameFile.empty() && currentFrameFile != "??") {
+        std::string srcBase = std::filesystem::path(sourcePath_).filename().string();
+        std::string frmBase = std::filesystem::path(currentFrameFile).filename().string();
+        if (frmBase != srcBase) return {};
     }
 
-    sendCommand("-stack-list-locals --simple-values");
+    sendCommand("-stack-list-variables --all-values");
     std::string response = readUntilResult(3000);
     auto records = mi::parse(response);
     auto* result = mi::findRecord(records, mi::RecordType::Result, "done");
     if (!result) return {};
 
     std::vector<Variable> vars;
-    auto it = result->payload.find("locals");
+    auto it = result->payload.find("variables");
     if (it == result->payload.end()) return vars;
     const mi::Value& locals = it->second;
     if (!locals.isList()) return vars;
@@ -330,6 +334,166 @@ std::vector<Variable> GDBController::getLocalVariables() {
             v.type  = item.getString("type",  "?");
             v.value = item.getString("value", "?");
             if (v.name.size() >= 2 && v.name[0] == '_' && v.name[1] == '_') continue;
+
+            // If the MI list didn't include a type field (common in older GDB versions
+            // where --all-values only returns name+value), fetch it with `whatis`.
+            if (v.type == "?") {
+                sendCommand("-interpreter-exec console \"whatis " + v.name + "\"");
+                std::string whatisResp = readUntilResult(2000);
+                // The GDB MI console stream emits: ~"type = <typename>\n"
+                // We search for "type = " and read until the GDB C-string escape \n or closing "
+                const std::string marker = "type = ";
+                auto mpos = whatisResp.find(marker);
+                if (mpos != std::string::npos) {
+                    mpos += marker.size();
+                    size_t tend = mpos;
+                    while (tend < whatisResp.size()) {
+                        // GDB MI C-strings end their line with \n (two chars: backslash + n)
+                        if (whatisResp[tend] == '\\' && tend + 1 < whatisResp.size() && whatisResp[tend + 1] == 'n')
+                            break;
+                        if (whatisResp[tend] == '"') break;  // end of C-string token
+                        tend++;
+                    }
+                    if (tend > mpos) {
+                        v.type = whatisResp.substr(mpos, tend - mpos);
+                        // Trim trailing whitespace
+                        while (!v.type.empty() && (v.type.back() == ' ' || v.type.back() == '\t'))
+                            v.type.pop_back();
+                    }
+                }
+            }
+
+            // Get memory address using GDB address-of operator
+            sendCommand("-data-evaluate-expression \"&" + v.name + "\"");
+            std::string addrResp = readUntilResult(2000);
+            auto addrRecords = mi::parse(addrResp);
+            auto* addrResult = mi::findRecord(addrRecords, mi::RecordType::Result, "done");
+            if (addrResult) {
+                auto valIt = addrResult->payload.find("value");
+                if (valIt != addrResult->payload.end()) {
+                    std::string addrStr = valIt->second.getString("value", "");
+                    // Extract address from format like "$1 = 0x7fff5fbff8ac"
+                    size_t pos = addrStr.find("0x");
+                    if (pos != std::string::npos) {
+                        v.address = addrStr.substr(pos);
+                    }
+                }
+            }
+
+            // Detect arrays (type contains '[')
+            if (v.type.find("[") != std::string::npos && v.type.find("]") != std::string::npos) {
+                v.isArray = true;
+                // Parse array size from type like "int[5]" or "char[100]"
+                size_t start = v.type.find("[");
+                size_t end = v.type.find("]");
+                if (start != std::string::npos && end != std::string::npos && end > start) {
+                    std::string sizeStr = v.type.substr(start + 1, end - start - 1);
+                    int arraySize = 0;
+                    try { arraySize = std::stoi(sizeStr); } catch (...) { arraySize = 0; }
+
+                    if (arraySize > 0 && arraySize <= 1000) {
+                        // Fetch array elements
+                        for (int i = 0; i < arraySize; i++) {
+                            sendCommand("-data-evaluate-expression \"" + v.name + "[" + std::to_string(i) + "]\"");
+                            std::string elemResp = readUntilResult(2000);
+                            auto elemRecords = mi::parse(elemResp);
+                            auto* elemResult = mi::findRecord(elemRecords, mi::RecordType::Result, "done");
+                            if (elemResult) {
+                                auto valIt = elemResult->payload.find("value");
+                                if (valIt != elemResult->payload.end()) {
+                                    Variable elem;
+                                    elem.name = "[" + std::to_string(i) + "]";
+                                    elem.value = valIt->second.getString("value", "?");
+                                    elem.type = v.type.substr(0, start);  // Element type
+
+                                    // Get element address
+                                    sendCommand("-data-evaluate-expression \"&" + v.name + "[" + std::to_string(i) + "]\"");
+                                    std::string elemAddrResp = readUntilResult(2000);
+                                    auto elemAddrRecords = mi::parse(elemAddrResp);
+                                    auto* elemAddrResult = mi::findRecord(elemAddrRecords, mi::RecordType::Result, "done");
+                                    if (elemAddrResult) {
+                                        auto elemValIt = elemAddrResult->payload.find("value");
+                                        if (elemValIt != elemAddrResult->payload.end()) {
+                                            std::string elemAddrStr = elemValIt->second.getString("value", "");
+                                            size_t pos = elemAddrStr.find("0x");
+                                            if (pos != std::string::npos) {
+                                                elem.address = elemAddrStr.substr(pos);
+                                            }
+                                        }
+                                    }
+
+                                    v.elements.push_back(elem);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Detect char pointers (strings)
+            else if (v.type == "char *" || v.type.find("char *") != std::string::npos) {
+                v.isPointer = true;
+                v.isString = true;
+                // Fetch string content and address
+                sendCommand("-data-evaluate-expression \"" + v.name + "\"");
+                std::string strResp = readUntilResult(2000);
+                auto strRecords = mi::parse(strResp);
+                auto* strResult = mi::findRecord(strRecords, mi::RecordType::Result, "done");
+                if (strResult) {
+                    auto valIt = strResult->payload.find("value");
+                    if (valIt != strResult->payload.end()) {
+                        std::string strVal = valIt->second.getString("value", "");
+                        // GDB returns strings like "\"hello\\000\""
+                        if (!strVal.empty() && strVal[0] == '"') {
+                            // Extract characters
+                            size_t idx = 1;
+                            int charIdx = 0;
+                            while (idx < strVal.size() && strVal[idx] != '"' && charIdx < 50) {
+                                Variable ch;
+                                ch.name = "[" + std::to_string(charIdx) + "]";
+                                if (strVal[idx] == '\\' && idx + 1 < strVal.size()) {
+                                    // Escape sequence
+                                    if (strVal[idx + 1] == '0') {
+                                        ch.value = "\\0";
+                                        v.elements.push_back(ch);
+                                        break;  // Null terminator
+                                    } else if (strVal[idx + 1] == 'n') {
+                                        ch.value = "\\n";
+                                    } else if (strVal[idx + 1] == 't') {
+                                        ch.value = "\\t";
+                                    } else {
+                                        ch.value = std::string(1, strVal[idx + 1]);
+                                    }
+                                    idx += 2;
+                                } else {
+                                    ch.value = std::string(1, strVal[idx]);
+                                    idx++;
+                                }
+                                v.elements.push_back(ch);
+                                charIdx++;
+                            }
+                        }
+                    }
+                }
+            }
+            // Detect pointers
+            else if (v.type.find("*") != std::string::npos) {
+                v.isPointer = true;
+                // Get pointed-to value
+                sendCommand("-data-evaluate-expression \"*" + v.name + "\"");
+                std::string ptrResp = readUntilResult(2000);
+                auto ptrRecords = mi::parse(ptrResp);
+                auto* ptrResult = mi::findRecord(ptrRecords, mi::RecordType::Result, "done");
+                if (ptrResult) {
+                    auto valIt = ptrResult->payload.find("value");
+                    if (valIt != ptrResult->payload.end()) {
+                        Variable deref;
+                        deref.name = "*" + v.name;
+                        deref.value = valIt->second.getString("value", "?");
+                        v.elements.push_back(deref);
+                    }
+                }
+            }
+
             vars.push_back(v);
         }
     }

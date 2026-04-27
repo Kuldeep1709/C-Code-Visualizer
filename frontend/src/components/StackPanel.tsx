@@ -13,7 +13,6 @@ export default function StackPanel({ stack, status }: StackPanelProps) {
           <span className="panel-header__title">Call Stack</span>
         </div>
         <div className="empty-state">
-          <span className="empty-state__icon">📚</span>
           <span>Stack frames appear here</span>
         </div>
       </div>
