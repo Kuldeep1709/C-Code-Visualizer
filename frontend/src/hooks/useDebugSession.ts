@@ -48,6 +48,24 @@ const initialState: DebugState = {
   stepCount: 0,
 };
 
+const CONTROL_KEYWORDS = new Set([
+  'if', 'for', 'while', 'switch', 'return', 'sizeof',
+]);
+
+function inferPendingFunctionCall(sourceLine: string, existingFrames: StackFrame[]): string | null {
+  const withoutStrings = sourceLine
+    .replace(/"([^"\\]|\\.)*"/g, '')
+    .replace(/'([^'\\]|\\.)*'/g, '');
+
+  const match = withoutStrings.match(/([A-Za-z_]\w*)\s*\(/);
+  if (!match) return null;
+
+  const candidate = match[1];
+  if (CONTROL_KEYWORDS.has(candidate)) return null;
+  if (existingFrames.some((frame) => frame.func === candidate)) return null;
+  return candidate;
+}
+
 export function useDebugSession() {
   const [state, setState] = useState<DebugState>(initialState);
   const wsRef = useRef<WebSocket | null>(null);
@@ -107,25 +125,34 @@ export function useDebugSession() {
         if (message.type === 'state') {
           const s = message.data;
           setState(prev => {
+            const currentLine = s.line ?? s.currentLine ?? -1;
+            const mappedStack: StackFrame[] = (s.stack ?? []).map((f: any) => ({
+              level: f.level,
+              func: f.func ?? f.function,
+              file: f.file,
+              line: f.line,
+            }));
+
+            const sourceLine = currentLine > 0 ? (prev.sourceLines[currentLine - 1] ?? '') : '';
+            const inferredCall = inferPendingFunctionCall(sourceLine, mappedStack);
+            const stackWithPendingCall = inferredCall
+              ? [{ level: -1, func: inferredCall, file: 'main.c', line: currentLine }, ...mappedStack]
+              : mappedStack;
+
             const next: DebugState = {
               ...prev,
               status: s.status === 'paused' ? 'paused' :
                 s.status === 'finished' ? 'finished' :
                   s.status === 'stopped' ? 'idle' :
                     s.status === 'error' ? 'error' : prev.status,
-              currentLine: s.line ?? s.currentLine ?? -1,
+              currentLine,
               previousVariables: prev.variables,
               variables: (s.vars ?? s.variables ?? []).map((v: any) => ({
                 name: v.name,
                 type: v.type,
                 value: v.value,
               })),
-              stack: (s.stack ?? []).map((f: any) => ({
-                level: f.level,
-                func: f.func ?? f.function,
-                file: f.file,
-                line: f.line,
-              })),
+              stack: stackWithPendingCall,
               output: s.output !== undefined ? s.output : prev.output,
               compileError: s.error && s.status === 'error' ? s.error : prev.compileError,
               stepCount: prev.stepCount + (s.status === 'paused' ? 1 : 0),

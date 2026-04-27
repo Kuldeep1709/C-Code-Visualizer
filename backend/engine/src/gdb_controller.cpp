@@ -514,14 +514,22 @@ std::vector<StackFrame> GDBController::getStackFrames() {
     if (!stack.isList()) return frames;
 
     for (const auto& item : stack.asList()) {
-        if (item.isTuple()) {
-            StackFrame f;
-            f.level    = item.getInt   ("level", 0);
-            f.function = item.getString("func",  "??");
-            f.file     = item.getString("file",  "??");
-            f.line     = item.getInt   ("line",  0);
-            frames.push_back(f);
+        if (!item.isTuple()) continue;
+
+        const mi::Value* frameVal = &item;
+        const auto& entry = item.asTuple();
+        auto frameIt = entry.find("frame");
+        if (frameIt != entry.end() && frameIt->second.isTuple()) {
+            frameVal = &frameIt->second;
         }
+
+        StackFrame f;
+        f.level    = frameVal->getInt   ("level", 0);
+        f.function = frameVal->getString("func",  "??");
+        f.file     = frameVal->getString("fullname", "");
+        if (f.file.empty()) f.file = frameVal->getString("file", "??");
+        f.line     = frameVal->getInt   ("line",  0);
+        frames.push_back(f);
     }
     return frames;
 }
