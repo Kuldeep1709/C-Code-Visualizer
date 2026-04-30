@@ -31,6 +31,26 @@ static std::string jsonEscape(const std::string& s) {
 }
 
 // Serialize a ProgramState to JSON string
+static std::string variableToJson(const ccv::Variable& v) {
+    std::ostringstream out;
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(v.name) << "\",";
+    out << "\"type\":\"" << jsonEscape(v.type) << "\",";
+    out << "\"value\":\"" << jsonEscape(v.value) << "\",";
+    out << "\"address\":\"" << jsonEscape(v.address) << "\",";
+    out << "\"isArray\":" << (v.isArray ? "true" : "false") << ",";
+    out << "\"isString\":" << (v.isString ? "true" : "false") << ",";
+    out << "\"isPointer\":" << (v.isPointer ? "true" : "false") << ",";
+    out << "\"elements\":[";
+    for (size_t i = 0; i < v.elements.size(); i++) {
+        if (i > 0) out << ",";
+        out << variableToJson(v.elements[i]);
+    }
+    out << "]";
+    out << "}";
+    return out.str();
+}
+
 static std::string stateToJson(const ccv::ProgramState& state) {
     std::ostringstream out;
     out << "{";
@@ -41,10 +61,7 @@ static std::string stateToJson(const ccv::ProgramState& state) {
     out << "\"vars\":[";
     for (size_t i = 0; i < state.variables.size(); i++) {
         if (i > 0) out << ",";
-        const auto& v = state.variables[i];
-        out << "{\"name\":\"" << jsonEscape(v.name) << "\","
-            << "\"type\":\"" << jsonEscape(v.type) << "\","
-            << "\"value\":\"" << jsonEscape(v.value) << "\"}";
+        out << variableToJson(state.variables[i]);
     }
     out << "],";
 

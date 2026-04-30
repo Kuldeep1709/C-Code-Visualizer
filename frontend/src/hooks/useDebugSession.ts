@@ -48,6 +48,19 @@ const initialState: DebugState = {
   stepCount: 0,
 };
 
+function mapVariable(v: any): Variable {
+  return {
+    name: v.name,
+    type: v.type,
+    value: v.value,
+    address: v.address,
+    elements: Array.isArray(v.elements) ? v.elements.map(mapVariable) : [],
+    isArray: Boolean(v.isArray),
+    isString: Boolean(v.isString),
+    isPointer: Boolean(v.isPointer),
+  };
+}
+
 const CONTROL_KEYWORDS = new Set([
   'if', 'for', 'while', 'switch', 'return', 'sizeof',
 ]);
@@ -173,11 +186,7 @@ export function useDebugSession() {
                     s.status === 'error' ? 'error' : prev.status,
               currentLine,
               previousVariables: prev.variables,
-              variables: (s.vars ?? s.variables ?? []).map((v: any) => ({
-                name: v.name,
-                type: v.type,
-                value: v.value,
-              })),
+              variables: (s.vars ?? s.variables ?? []).map(mapVariable),
               stack: stackWithPendingCall,
               output: s.output !== undefined ? s.output : prev.output,
               compileError: s.error && s.status === 'error' ? s.error : prev.compileError,

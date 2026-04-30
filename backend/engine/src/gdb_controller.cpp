@@ -26,6 +26,49 @@ GDBController::~GDBController() {
     stop();
 }
 
+static std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+static std::string extractMiStringField(const std::string& response, const std::string& field) {
+    const std::string marker = field + "=\"";
+    auto pos = response.find(marker);
+    if (pos == std::string::npos) return "";
+    pos += marker.size();
+
+    std::string value;
+    while (pos < response.size()) {
+        char c = response[pos];
+        if (c == '\\' && pos + 1 < response.size()) {
+            char next = response[pos + 1];
+            switch (next) {
+                case 'n': value += '\n'; break;
+                case 't': value += '\t'; break;
+                case 'r': value += '\r'; break;
+                case '"': value += '"'; break;
+                case '\\': value += '\\'; break;
+                default: value += next; break;
+            }
+            pos += 2;
+        } else if (c == '"') {
+            break;
+        } else {
+            value += c;
+            pos++;
+        }
+    }
+    return value;
+}
+
 // Compilation
 
 CompileResult GDBController::compile(const std::string& sourceCode, const std::string& workDir) {
@@ -41,7 +84,7 @@ CompileResult GDBController::compile(const std::string& sourceCode, const std::s
         f << sourceCode;
     }
 
-    std::string cmd = "gcc -g -O0 -o " + binaryPath + " " + sourcePath + " 2>&1";
+    std::string cmd = "gcc -g -O0 -o " + shellQuote(binaryPath) + " " + shellQuote(sourcePath) + " 2>&1";
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) { result.error = "Failed to run gcc"; return result; }
 
@@ -154,7 +197,10 @@ std::string GDBController::readUntilResult(int timeoutMs) {
         accumulated += line + "\n";
         // Drain PTY on each iteration
         drainPTY();
-        if (!line.empty() && line[0] == '^') return accumulated;
+        if (!line.empty() && line[0] == '^' &&
+            (line.find("^done") == 0 || line.find("^error") == 0)) {
+            return accumulated;
+        }
     }
     return accumulated;
 }
@@ -372,11 +418,18 @@ std::vector<Variable> GDBController::getLocalVariables(const std::string& curren
                 auto valIt = addrResult->payload.find("value");
                 if (valIt != addrResult->payload.end()) {
                     std::string addrStr = valIt->second.getString("value", "");
+                    if (addrStr.empty()) addrStr = extractMiStringField(addrResp, "value");
                     // Extract address from format like "$1 = 0x7fff5fbff8ac"
                     size_t pos = addrStr.find("0x");
                     if (pos != std::string::npos) {
                         v.address = addrStr.substr(pos);
                     }
+                }
+            } else {
+                std::string addrStr = extractMiStringField(addrResp, "value");
+                size_t pos = addrStr.find("0x");
+                if (pos != std::string::npos) {
+                    v.address = addrStr.substr(pos);
                 }
             }
 
@@ -398,29 +451,38 @@ std::vector<Variable> GDBController::getLocalVariables(const std::string& curren
                             std::string elemResp = readUntilResult(2000);
                             auto elemRecords = mi::parse(elemResp);
                             auto* elemResult = mi::findRecord(elemRecords, mi::RecordType::Result, "done");
-                            if (elemResult) {
-                                auto valIt = elemResult->payload.find("value");
-                                if (valIt != elemResult->payload.end()) {
-                                    Variable elem;
-                                    elem.name = "[" + std::to_string(i) + "]";
-                                    elem.value = valIt->second.getString("value", "?");
-                                    elem.type = v.type.substr(0, start);  // Element type
+                                if (elemResult) {
+                                    auto valIt = elemResult->payload.find("value");
+                                    if (valIt != elemResult->payload.end()) {
+                                        Variable elem;
+                                        elem.name = "[" + std::to_string(i) + "]";
+                                        elem.value = valIt->second.getString("value", "");
+                                        if (elem.value.empty()) elem.value = extractMiStringField(elemResp, "value");
+                                        if (elem.value.empty()) elem.value = "?";
+                                        elem.type = v.type.substr(0, start);  // Element type
 
                                     // Get element address
                                     sendCommand("-data-evaluate-expression \"&" + v.name + "[" + std::to_string(i) + "]\"");
                                     std::string elemAddrResp = readUntilResult(2000);
                                     auto elemAddrRecords = mi::parse(elemAddrResp);
                                     auto* elemAddrResult = mi::findRecord(elemAddrRecords, mi::RecordType::Result, "done");
-                                    if (elemAddrResult) {
-                                        auto elemValIt = elemAddrResult->payload.find("value");
-                                        if (elemValIt != elemAddrResult->payload.end()) {
-                                            std::string elemAddrStr = elemValIt->second.getString("value", "");
-                                            size_t pos = elemAddrStr.find("0x");
-                                            if (pos != std::string::npos) {
-                                                elem.address = elemAddrStr.substr(pos);
+                                            if (elemAddrResult) {
+                                                auto elemValIt = elemAddrResult->payload.find("value");
+                                                if (elemValIt != elemAddrResult->payload.end()) {
+                                                    std::string elemAddrStr = elemValIt->second.getString("value", "");
+                                                    if (elemAddrStr.empty()) elemAddrStr = extractMiStringField(elemAddrResp, "value");
+                                                    size_t pos = elemAddrStr.find("0x");
+                                                    if (pos != std::string::npos) {
+                                                        elem.address = elemAddrStr.substr(pos);
+                                                    }
+                                                }
+                                            } else {
+                                                std::string elemAddrStr = extractMiStringField(elemAddrResp, "value");
+                                                size_t pos = elemAddrStr.find("0x");
+                                                if (pos != std::string::npos) {
+                                                    elem.address = elemAddrStr.substr(pos);
+                                                }
                                             }
-                                        }
-                                    }
 
                                     v.elements.push_back(elem);
                                 }
@@ -488,7 +550,17 @@ std::vector<Variable> GDBController::getLocalVariables(const std::string& curren
                     if (valIt != ptrResult->payload.end()) {
                         Variable deref;
                         deref.name = "*" + v.name;
-                        deref.value = valIt->second.getString("value", "?");
+                        deref.value = valIt->second.getString("value", "");
+                        if (deref.value.empty()) deref.value = extractMiStringField(ptrResp, "value");
+                        if (deref.value.empty()) deref.value = "?";
+                        v.elements.push_back(deref);
+                    }
+                } else {
+                    std::string derefValue = extractMiStringField(ptrResp, "value");
+                    if (!derefValue.empty()) {
+                        Variable deref;
+                        deref.name = "*" + v.name;
+                        deref.value = derefValue;
                         v.elements.push_back(deref);
                     }
                 }
