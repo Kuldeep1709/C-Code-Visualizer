@@ -5,32 +5,12 @@ import VariablePanel from './components/VariablePanel';
 import StackPanel from './components/StackPanel';
 import ConsolePanel from './components/ConsolePanel';
 import { useDebugSession } from './hooks/useDebugSession';
+import { CODE_EXAMPLES } from './examples/codeExamples';
 import './App.css';
 
-const DEFAULT_CODE = `#include <stdio.h>
-
-int add(int a, int b) {
-    int result = a + b;
-    return result;
-}
-
-int main() {
-    int x = 5;
-    int y = 10;
-    int sum = add(x, y);
-
-    printf("Sum of %d and %d is %d\\n", x, y, sum);
-
-    for (int i = 0; i < 3; i++) {
-        printf("i = %d\\n", i);
-    }
-
-    return 0;
-}
-`;
-
 function App() {
-  const [code, setCode] = useState(DEFAULT_CODE);
+  const [selectedExampleId, setSelectedExampleId] = useState(CODE_EXAMPLES[0].id);
+  const [code, setCode] = useState(CODE_EXAMPLES[0].code);
   const {
     state,
     compile,
@@ -54,6 +34,15 @@ function App() {
 
   const handleReset = useCallback(() => {
     reset();
+  }, [reset]);
+
+  const handleExampleChange = useCallback((exampleId: string) => {
+    const example = CODE_EXAMPLES.find(item => item.id === exampleId);
+    if (!example) return;
+
+    reset();
+    setSelectedExampleId(example.id);
+    setCode(example.code);
   }, [reset]);
 
   // Keyboard shortcuts
@@ -111,6 +100,23 @@ function App() {
         isDebugging={isDebugging}
         status={state.status}
       />
+
+      <div className="example-bar">
+        <label className="example-picker">
+          <span className="example-picker__label">Example</span>
+          <select
+            className="example-picker__select"
+            value={selectedExampleId}
+            onChange={(event) => handleExampleChange(event.target.value)}
+          >
+            {CODE_EXAMPLES.map(example => (
+              <option key={example.id} value={example.id}>
+                {example.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       {/* Main Content */}
       <div className="main-content">
